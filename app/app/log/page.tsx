@@ -13,7 +13,7 @@ export default async function LogPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <h1 className="display text-4xl text-indigo">{dict.log.title}</h1>
-      <LogComposer dict={dict} date={data.today} />
+      <LogComposer dict={dict} locale={locale} date={data.today} />
       <LogList logs={data.todayLogs} dict={dict} />
     </div>
   );

@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createLog } from "@/lib/actions";
 import { demoReply, type Proposal } from "@/lib/chat";
-import type { Dictionary } from "@/lib/i18n";
+import { errorText, type Dictionary } from "@/lib/i18n";
 import type { Locale } from "@/lib/locale";
-import { errorText } from "@/lib/i18n";
+import { bindVoiceListener } from "@/lib/voice-bus";
+import { MicIcon } from "./icons";
 import { SpeakButton } from "./speak-button";
+import { micMessage, useKreyolMic } from "./use-kreyol-mic";
 
 function readProposal(raw: string): Proposal | null {
   if (!raw) return null;
@@ -25,7 +27,10 @@ type Message = {
   proposal: Proposal | null;
   mode?: "demo" | "live";
   fallback?: boolean;
+  speak?: boolean;
 };
+
+type SendOptions = { speak?: boolean; dropProposal?: boolean };
 
 export function ChatPanel({
   dict,
@@ -52,10 +57,13 @@ export function ChatPanel({
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
+  const pendingRef = useRef(false);
+  const sendRef = useRef<(message: string, options?: SendOptions) => Promise<void>>(async () => undefined);
 
-  async function send() {
-    const message = text.trim();
-    if (!message) return;
+  async function send(raw?: string, options?: SendOptions) {
+    const message = (raw ?? text).trim();
+    if (!message || pendingRef.current) return;
+    pendingRef.current = true;
     setText("");
     setPending(true);
     setNotice("");
@@ -65,43 +73,69 @@ export function ChatPanel({
       const reply = demoReply(message, locale);
       setMessages((current) => [
         ...current,
-        { id: `${localId}-a`, role: "assistant", content: reply.text, proposal: reply.proposal, mode: "demo" },
+        {
+          id: `${localId}-a`,
+          role: "assistant",
+          content: reply.text,
+          proposal: options?.dropProposal ? null : reply.proposal,
+          mode: "demo",
+          speak: options?.speak,
+        },
       ]);
       setNotice(dict.offline.offline);
+      pendingRef.current = false;
       setPending(false);
       return;
     }
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    const data = (await response.json()) as {
-      id?: string;
-      text?: string;
-      proposal?: Proposal | null;
-      mode?: "demo" | "live";
-      fallback?: boolean;
-      error?: string;
-    };
-    if (!response.ok || !data.text) {
-      setNotice(errorText(dict, data.error || "auth"));
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, dropProposal: Boolean(options?.dropProposal) }),
+      });
+      const data = (await response.json()) as {
+        id?: string;
+        text?: string;
+        proposal?: Proposal | null;
+        mode?: "demo" | "live";
+        fallback?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !data.text) {
+        setNotice(errorText(dict, data.error || "auth"));
+        return;
+      }
+      setMessages((current) => [
+        ...current,
+        {
+          id: data.id || `${localId}-a`,
+          role: "assistant",
+          content: data.text || "",
+          proposal: data.proposal ?? null,
+          mode: data.mode,
+          fallback: data.fallback,
+          speak: options?.speak,
+        },
+      ]);
+    } catch {
+      setNotice(dict.offline.offline);
+    } finally {
+      pendingRef.current = false;
       setPending(false);
-      return;
     }
-    setMessages((current) => [
-      ...current,
-      {
-        id: data.id || `${localId}-a`,
-        role: "assistant",
-        content: data.text || "",
-        proposal: data.proposal ?? null,
-        mode: data.mode,
-        fallback: data.fallback,
-      },
-    ]);
-    setPending(false);
   }
+
+  sendRef.current = send;
+
+  const mic = useKreyolMic(locale, (transcript) => {
+    void sendRef.current(transcript, { speak: true });
+  });
+
+  useEffect(() => {
+    return bindVoiceListener((utterance) => {
+      void sendRef.current(utterance.text, { speak: true, dropProposal: utterance.dropProposal });
+    });
+  }, []);
 
   async function confirm(proposal: Proposal, id: string) {
     const result = await createLog({
@@ -141,7 +175,7 @@ export function ChatPanel({
             {message.fallback ? <p className="mt-1 text-xs opacity-80">{dict.chat.fallback}</p> : null}
             {message.role === "assistant" ? (
               <div className="mt-2">
-                <SpeakButton text={message.content} dict={dict} />
+                <SpeakButton text={message.content} dict={dict} autoPlay={Boolean(message.speak)} />
               </div>
             ) : null}
             {message.proposal ? (
@@ -169,10 +203,21 @@ export function ChatPanel({
             }
           }}
         />
+        <button
+          type="button"
+          className={`btn ${mic.phase === "recording" ? "btn-coral" : "btn-ink"}`}
+          onClick={mic.toggle}
+          disabled={pending || mic.phase === "transcribing"}
+          aria-pressed={mic.phase === "recording"}
+        >
+          <MicIcon />
+          {mic.phase === "recording" ? dict.log.stop : mic.phase === "transcribing" ? dict.log.transcribing : dict.log.listen}
+        </button>
         <button type="button" className="btn btn-ink" onClick={() => void send()} disabled={pending}>
           {dict.chat.send}
         </button>
       </div>
+      {mic.error ? <p className="mt-2 text-sm text-coral">{micMessage(dict, mic.error)}</p> : null}
       {notice ? <p className="mt-2 text-sm text-ocean">{notice}</p> : null}
     </section>
   );

@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createLog } from "@/lib/actions";
+import { demoReply } from "@/lib/chat";
 import { CATEGORIES, type Category } from "@/lib/categories";
 import { errorText, type Dictionary } from "@/lib/i18n";
+import type { Locale } from "@/lib/locale";
 import { parseUtterance } from "@/lib/parser";
+import { emitVoiceUtterance } from "@/lib/voice-bus";
 import { MicIcon } from "./icons";
 import { SpeakButton } from "./speak-button";
+import { micMessage, useKreyolMic } from "./use-kreyol-mic";
 
 type Draft = { category: Category | ""; hours: string; note: string; raw: string; confidence: "high" | "low" };
 type Queued = { category: Category; hours: number; note: string; rawText: string; date: string };
@@ -23,35 +27,14 @@ function readQueue(): Queued[] {
   }
 }
 
-type SpeechRec = {
-  lang: string;
-  interimResults: boolean;
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-function recognition(): SpeechRec | null {
-  const browser = window as unknown as {
-    SpeechRecognition?: new () => SpeechRec;
-    webkitSpeechRecognition?: new () => SpeechRec;
-  };
-  const Ctor = browser.SpeechRecognition || browser.webkitSpeechRecognition;
-  return Ctor ? new Ctor() : null;
-}
-
-export function LogComposer({ dict, date }: { dict: Dictionary; date: string }) {
+export function LogComposer({ dict, locale, date }: { dict: Dictionary; locale: Locale; date: string }) {
   const router = useRouter();
   const [text, setText] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [listening, setListening] = useState(false);
-  const [unsupported, setUnsupported] = useState(false);
   const [message, setMessage] = useState("");
   const [manual, setManual] = useState(false);
   const [pending, setPending] = useState(false);
-  const recRef = useRef<SpeechRec | null>(null);
+  const [localReply, setLocalReply] = useState("");
 
   async function flush() {
     if (!navigator.onLine) return;
@@ -88,31 +71,32 @@ export function LogComposer({ dict, date }: { dict: Dictionary; date: string }) 
     });
   }
 
-  function listen(lang: string) {
-    const rec = recognition();
-    if (!rec) {
-      setUnsupported(true);
+  async function advise(transcript: string, dropProposal: boolean) {
+    if (!navigator.onLine) {
+      setLocalReply(demoReply(transcript, locale).text);
       return;
     }
-    rec.lang = lang;
-    rec.interimResults = true;
-    rec.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? "")
-        .join(" ")
-        .trim();
-      setText(transcript);
-      preview(transcript);
-    };
-    rec.onerror = () => {
-      if (lang === "ht-HT") listen("fr-FR");
-      else setListening(false);
-    };
-    rec.onend = () => setListening(false);
-    recRef.current = rec;
-    rec.start();
-    setListening(true);
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: transcript, dropProposal }),
+    });
+    const data = (await response.json().catch(() => null)) as { text?: string } | null;
+    if (response.ok && data?.text) setLocalReply(data.text);
   }
+
+  function onTranscript(transcript: string) {
+    setText(transcript);
+    setLocalReply("");
+    const parsed = parseUtterance(transcript);
+    const loggable = Boolean(parsed.category && parsed.hours);
+    if (loggable) preview(transcript);
+    else setDraft(null);
+    const handled = emitVoiceUtterance({ text: transcript, dropProposal: loggable });
+    if (!handled) void advise(transcript, loggable);
+  }
+
+  const mic = useKreyolMic(locale, onTranscript);
 
   async function saveDraft() {
     if (!draft?.category || !draft.hours) {
@@ -202,15 +186,16 @@ export function LogComposer({ dict, date }: { dict: Dictionary; date: string }) 
         />
         <button
           type="button"
-          className={`btn ${listening ? "btn-coral" : "btn-ink"}`}
-          onClick={() => (listening ? recRef.current?.stop() : listen("ht-HT"))}
-          aria-pressed={listening}
+          className={`btn ${mic.phase === "recording" ? "btn-coral" : "btn-ink"}`}
+          onClick={mic.toggle}
+          disabled={mic.phase === "transcribing"}
+          aria-pressed={mic.phase === "recording"}
         >
           <MicIcon />
-          {listening ? dict.log.stop : dict.log.listen}
+          {mic.phase === "recording" ? dict.log.stop : mic.phase === "transcribing" ? dict.log.transcribing : dict.log.listen}
         </button>
       </div>
-      {unsupported ? <p className="mt-2 text-sm text-coral">{dict.log.unsupported}</p> : null}
+      {mic.error ? <p className="mt-2 text-sm text-coral">{micMessage(dict, mic.error)}</p> : null}
       <div className="mt-3 flex flex-wrap gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-ink/50">{dict.log.examples}</span>
         {dict.log.chips.map((chip) => (
@@ -298,6 +283,15 @@ export function LogComposer({ dict, date }: { dict: Dictionary; date: string }) 
             {dict.log.save}
           </button>
         </form>
+      ) : null}
+      {localReply ? (
+        <div className="mt-4 rounded-2xl bg-cream p-4 text-sm">
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ocean">{dict.chat.advisor}</p>
+          <p className="whitespace-pre-wrap leading-relaxed">{localReply}</p>
+          <div className="mt-2">
+            <SpeakButton key={localReply} text={localReply} dict={dict} autoPlay />
+          </div>
+        </div>
       ) : null}
       {message ? <p className="mt-3 text-sm text-coral">{message}</p> : null}
     </section>

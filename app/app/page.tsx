@@ -27,7 +27,7 @@ export default async function DashboardPage() {
             {hello}, {user.name.split(" ")[0]}
           </h1>
         </header>
-        <LogComposer dict={dict} date={data.today} />
+        <LogComposer dict={dict} locale={locale} date={data.today} />
         <LogList logs={data.todayLogs} dict={dict} />
         <div className="grid gap-6 lg:grid-cols-2">
           <HabitBoard habits={data.habits} date={data.today} dict={dict} />

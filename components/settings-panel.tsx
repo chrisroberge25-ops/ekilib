@@ -22,6 +22,7 @@ export function SettingsPanel({
   const [message, setMessage] = useState("");
   const rows = [
     [dict.settings.openai, integrations.openai],
+    [dict.settings.stt, integrations.stt],
     [dict.settings.eleven, integrations.eleven],
     [dict.settings.voiceState, integrations.voice],
     [dict.settings.google, integrations.google],
