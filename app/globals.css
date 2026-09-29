@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-outfit), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  --color-indigo: #0c2340;
+  --color-ocean: #164e73;
+  --color-lagoon: #2f6f8f;
+  --color-gold: #d4a054;
+  --color-gold-deep: #a8742e;
+  --color-cream: #f6f0e6;
+  --color-foam: #fbf7f1;
+  --color-coral: #e07a62;
+  --color-ink: #1c1915;
+  --color-line: #e4d8c6;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 3px;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+}
+
+.hero-wash {
+  background:
+    radial-gradient(900px 420px at 90% -10%, rgba(212, 160, 84, 0.28), transparent 55%),
+    radial-gradient(700px 380px at -10% 80%, rgba(224, 122, 98, 0.18), transparent 50%),
+    linear-gradient(165deg, #0c2340 0%, #123456 48%, #164e73 100%);
+}
+
+.panel {
+  background: var(--color-foam);
+  border: 1px solid var(--color-line);
+  border-radius: 1.5rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  border-radius: 999px;
+  padding: 0.55rem 1.15rem;
+  font-weight: 600;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-gold {
+  background: var(--color-gold);
+  color: var(--color-indigo);
+}
+
+.btn-coral {
+  background: var(--color-coral);
+  color: #fffaf6;
+}
+
+.btn-ink {
+  background: var(--color-indigo);
+  color: var(--color-cream);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+}
+
+.field {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid var(--color-line);
+  background: white;
+  padding: 0.75rem 0.9rem;
+  color: var(--color-ink);
+}
+
+.field:focus {
+  outline: 2px solid var(--color-gold);
+  border-color: transparent;
+}
