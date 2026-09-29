@@ -1,0 +1,305 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createLog } from "@/lib/actions";
+import { CATEGORIES, type Category } from "@/lib/categories";
+import { errorText, type Dictionary } from "@/lib/i18n";
+import { parseUtterance } from "@/lib/parser";
+import { MicIcon } from "./icons";
+import { SpeakButton } from "./speak-button";
+
+type Draft = { category: Category | ""; hours: string; note: string; raw: string; confidence: "high" | "low" };
+type Queued = { category: Category; hours: number; note: string; rawText: string; date: string };
+
+const QUEUE_KEY = "ekilib-queue";
+
+function readQueue(): Queued[] {
+  try {
+    const raw = localStorage.getItem(QUEUE_KEY);
+    return raw ? (JSON.parse(raw) as Queued[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+type SpeechRec = {
+  lang: string;
+  interimResults: boolean;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+function recognition(): SpeechRec | null {
+  const browser = window as unknown as {
+    SpeechRecognition?: new () => SpeechRec;
+    webkitSpeechRecognition?: new () => SpeechRec;
+  };
+  const Ctor = browser.SpeechRecognition || browser.webkitSpeechRecognition;
+  return Ctor ? new Ctor() : null;
+}
+
+export function LogComposer({ dict, date }: { dict: Dictionary; date: string }) {
+  const router = useRouter();
+  const [text, setText] = useState("");
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [listening, setListening] = useState(false);
+  const [unsupported, setUnsupported] = useState(false);
+  const [message, setMessage] = useState("");
+  const [manual, setManual] = useState(false);
+  const [pending, setPending] = useState(false);
+  const recRef = useRef<SpeechRec | null>(null);
+
+  async function flush() {
+    if (!navigator.onLine) return;
+    const queued = readQueue();
+    if (queued.length === 0) return;
+    const remain: Queued[] = [];
+    for (const item of queued) {
+      const result = await createLog({ ...item, source: "voice" });
+      if (!result.ok) remain.push(item);
+    }
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(remain));
+    if (remain.length !== queued.length) router.refresh();
+  }
+
+  useEffect(() => {
+    const onOnline = () => {
+      void flush();
+    };
+    window.addEventListener("online", onOnline);
+    void flush();
+    return () => window.removeEventListener("online", onOnline);
+    // flush closes over date-independent queue
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function preview(value: string) {
+    const parsed = parseUtterance(value);
+    setDraft({
+      category: parsed.category ?? "",
+      hours: parsed.hours ? String(parsed.hours) : "",
+      note: parsed.note,
+      raw: value,
+      confidence: parsed.confidence,
+    });
+  }
+
+  function listen(lang: string) {
+    const rec = recognition();
+    if (!rec) {
+      setUnsupported(true);
+      return;
+    }
+    rec.lang = lang;
+    rec.interimResults = true;
+    rec.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join(" ")
+        .trim();
+      setText(transcript);
+      preview(transcript);
+    };
+    rec.onerror = () => {
+      if (lang === "ht-HT") listen("fr-FR");
+      else setListening(false);
+    };
+    rec.onend = () => setListening(false);
+    recRef.current = rec;
+    rec.start();
+    setListening(true);
+  }
+
+  async function saveDraft() {
+    if (!draft?.category || !draft.hours) {
+      setMessage(dict.log.missing);
+      return;
+    }
+    const hours = Number(draft.hours.replace(",", "."));
+    const payload: Queued = {
+      category: draft.category,
+      hours,
+      note: draft.note,
+      rawText: draft.raw,
+      date,
+    };
+    if (!navigator.onLine) {
+      localStorage.setItem(QUEUE_KEY, JSON.stringify([...readQueue(), payload]));
+      setMessage(dict.log.offlineQueued);
+      setDraft(null);
+      setText("");
+      return;
+    }
+    setPending(true);
+    const result = await createLog({ ...payload, source: "voice" });
+    setPending(false);
+    if (!result.ok) {
+      setMessage(errorText(dict, result.error));
+      return;
+    }
+    setDraft(null);
+    setText("");
+    setMessage("");
+    router.refresh();
+  }
+
+  async function saveManual(formData: FormData) {
+    const category = String(formData.get("category") || "") as Category;
+    const hours = Number(String(formData.get("hours") || "").replace(",", "."));
+    const note = String(formData.get("note") || "");
+    setPending(true);
+    const result = await createLog({
+      category,
+      hours,
+      note,
+      rawText: note,
+      source: "manual",
+      date: String(formData.get("date") || date),
+    });
+    setPending(false);
+    if (!result.ok) {
+      setMessage(errorText(dict, result.error));
+      return;
+    }
+    setManual(false);
+    setMessage("");
+    router.refresh();
+  }
+
+  return (
+    <section className="panel p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="display text-3xl text-indigo">{dict.log.prompt}</h2>
+          <p className="mt-1 text-sm text-ink/70">{dict.log.voiceHint}</p>
+        </div>
+        <SpeakButton text={dict.log.prompt} dict={dict} />
+      </div>
+      <div className="mt-4 flex gap-2">
+        <label className="sr-only" htmlFor="utterance">
+          {dict.log.prompt}
+        </label>
+        <input
+          id="utterance"
+          className="field"
+          value={text}
+          placeholder={dict.log.placeholder}
+          onChange={(event) => {
+            setText(event.target.value);
+            if (event.target.value.trim()) preview(event.target.value);
+            else setDraft(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && text.trim()) {
+              event.preventDefault();
+              preview(text);
+            }
+          }}
+        />
+        <button
+          type="button"
+          className={`btn ${listening ? "btn-coral" : "btn-ink"}`}
+          onClick={() => (listening ? recRef.current?.stop() : listen("ht-HT"))}
+          aria-pressed={listening}
+        >
+          <MicIcon />
+          {listening ? dict.log.stop : dict.log.listen}
+        </button>
+      </div>
+      {unsupported ? <p className="mt-2 text-sm text-coral">{dict.log.unsupported}</p> : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-ink/50">{dict.log.examples}</span>
+        {dict.log.chips.map((chip) => (
+          <button
+            key={chip}
+            type="button"
+            className="rounded-full bg-cream px-3 py-1 text-sm text-indigo"
+            onClick={() => {
+              setText(chip);
+              preview(chip);
+            }}
+          >
+            {chip}
+          </button>
+        ))}
+      </div>
+      {draft ? (
+        <div className="mt-4 rounded-2xl border border-gold/50 bg-cream p-4">
+          <p className="text-sm text-ocean">{draft.confidence === "high" ? dict.log.high : dict.log.low}</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <label className="text-sm font-semibold">
+              {dict.log.category}
+              <select
+                className="field mt-1"
+                value={draft.category}
+                onChange={(event) => setDraft({ ...draft, category: event.target.value as Category })}
+              >
+                <option value="">{dict.log.category}</option>
+                {CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {dict.cats[category]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm font-semibold">
+              {dict.log.hours}
+              <input
+                className="field mt-1"
+                inputMode="decimal"
+                value={draft.hours}
+                onChange={(event) => setDraft({ ...draft, hours: event.target.value })}
+              />
+            </label>
+            <label className="text-sm font-semibold">
+              {dict.log.note}
+              <input className="field mt-1" value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} />
+            </label>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button type="button" className="btn btn-gold" onClick={saveDraft} disabled={pending}>
+              {dict.log.confirm}
+            </button>
+            <button type="button" className="btn btn-ghost border-indigo/20" onClick={() => setDraft(null)}>
+              {dict.log.discard}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      <button type="button" className="mt-4 text-sm font-semibold text-ocean" onClick={() => setManual((value) => !value)}>
+        {dict.log.manual}
+      </button>
+      {manual ? (
+        <form action={saveManual} className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-semibold">
+            {dict.log.category}
+            <select className="field mt-1" name="category" defaultValue="work">
+              {CATEGORIES.map((category) => (
+                <option key={category} value={category}>
+                  {dict.cats[category]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-semibold">
+            {dict.log.hours}
+            <input className="field mt-1" name="hours" inputMode="decimal" required placeholder="1.5" />
+          </label>
+          <label className="text-sm font-semibold sm:col-span-2">
+            {dict.log.note}
+            <input className="field mt-1" name="note" />
+          </label>
+          <input type="hidden" name="date" value={date} />
+          <button className="btn btn-ink sm:col-span-2" type="submit" disabled={pending}>
+            {dict.log.save}
+          </button>
+        </form>
+      ) : null}
+      {message ? <p className="mt-3 text-sm text-coral">{message}</p> : null}
+    </section>
+  );
+}

@@ -1,0 +1,148 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+// Provider is rewritten by scripts/prepare-database.ts:
+// sqlite for file: URLs, postgresql for Neon / any postgres URL.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  plan         String   @default("FREE")
+  locale       String   @default("ht")
+  timezone     String   @default("America/Port-au-Prince")
+  voiceId      String   @default("")
+  createdAt    DateTime @default(now())
+
+  sessions    Session[]
+  goals       CategoryGoal[]
+  logs        TimeLog[]
+  habits      Habit[]
+  reflections Reflection[]
+  connections CalendarConnection[]
+  events      CalendarEvent[]
+  messages    ChatMessage[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CategoryGoal {
+  id        String @id @default(cuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug      String
+  goalHours Float
+  sortOrder Int
+
+  @@unique([userId, slug])
+}
+
+model TimeLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String
+  hours     Float
+  note      String   @default("")
+  rawText   String   @default("")
+  source    String   @default("manual")
+  date      String
+  createdAt DateTime @default(now())
+
+  @@index([userId, date])
+}
+
+model Habit {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String   @default("")
+  name      String
+  sortOrder Int
+  active    Boolean  @default(true)
+  checks    HabitCheck[]
+}
+
+model HabitCheck {
+  id      String  @id @default(cuid())
+  habitId String
+  habit   Habit   @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  date    String
+  done    Boolean @default(true)
+
+  @@unique([habitId, date])
+}
+
+model Reflection {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date   String
+  energy Int?
+  mood   Int?
+  focus  Int?
+  note   String @default("")
+
+  @@unique([userId, date])
+}
+
+model CalendarConnection {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String
+  label        String    @default("")
+  status       String    @default("pending")
+  icsUrl       String    @default("")
+  externalId   String    @default("")
+  accessToken  String    @default("")
+  refreshToken String    @default("")
+  tokenExpiry  DateTime?
+  lastSyncAt   DateTime?
+  lastError    String    @default("")
+  events       CalendarEvent[]
+}
+
+model CalendarEvent {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectionId String?
+  connection   CalendarConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  externalId   String
+  title        String
+  startAt      DateTime?
+  endAt        DateTime?
+  date         String
+  category     String    @default("")
+  hours        Float     @default(0)
+  allDay       Boolean   @default(false)
+  logId        String?
+
+  @@unique([userId, externalId])
+  @@index([userId, date])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String
+  content   String
+  proposal  String   @default("")
+  createdAt DateTime @default(now())
+}
