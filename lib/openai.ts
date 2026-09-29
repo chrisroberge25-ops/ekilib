@@ -1,6 +1,9 @@
 import { SYSTEM_PROMPT } from "./chat";
 
-export async function completeChat(messages: { role: "user" | "assistant"; content: string }[]): Promise<string> {
+export async function completeChat(
+  messages: { role: "user" | "assistant"; content: string }[],
+  system = SYSTEM_PROMPT,
+): Promise<string> {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) throw new Error("missing_key");
   const base = (process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/$/, "");
@@ -15,7 +18,7 @@ export async function completeChat(messages: { role: "user" | "assistant"; conte
       model,
       temperature: 0.4,
       max_tokens: 500,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages.slice(-12)],
+      messages: [{ role: "system", content: system }, ...messages.slice(-12)],
     }),
   });
   if (!response.ok) throw new Error(`openai_${response.status}`);

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dictionary } from "@/lib/i18n";
 
-export function SpeakButton({ text, dict }: { text: string; dict: Dictionary }) {
+export function SpeakButton({ text, dict, autoPlay = false }: { text: string; dict: Dictionary; autoPlay?: boolean }) {
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const started = useRef(false);
 
   async function speak() {
     setState("loading");
@@ -28,6 +29,14 @@ export function SpeakButton({ text, dict }: { text: string; dict: Dictionary }) 
       setState("error");
     }
   }
+
+  useEffect(() => {
+    if (!autoPlay || started.current) return;
+    started.current = true;
+    void speak();
+    // Speak once for this mounted reply.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPlay]);
 
   return (
     <span className="inline-flex flex-col items-start gap-1">

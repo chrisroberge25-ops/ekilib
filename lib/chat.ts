@@ -1,6 +1,7 @@
 import type { Category } from "./categories";
 import type { Locale } from "./locale";
 import { coerceParsed, fold, parseUtterance, type ParsedLog } from "./parser";
+import { isKreyolText, kreyolMarkerCount } from "./speech-text";
 
 export type Proposal = {
   category: Category;
@@ -21,6 +22,16 @@ Lè ou pwopoze yon antre, mete yon sèl blòk JSON, epi pa mete anyen apre li:
 \`\`\`json
 {"propose":{"category":"work|life|health|sleep","hours":1.5,"note":"kout nòt"}}
 \`\`\``;
+
+export function systemPromptFor(locale: Locale): string {
+  const extra =
+    locale === "fr"
+      ? "Langue demandée pour cette session : français."
+      : locale === "en"
+        ? "Requested reply language for this session: English."
+        : "Lang repons pou sesyon sa a: Kreyòl ayisyen. Ekri tout repons lan an Kreyòl ayisyen. Pa reponn an angle. Pa reponn an franse, sof si itilizatè a mande sa klèman.";
+  return `${SYSTEM_PROMPT}\n\n${extra}`;
+}
 
 const CARE: Record<Locale, string> = {
   ht: "Mwen pa ka fè dyagnostik ni terapi. Ekilib se yon jounal balans, pa yon sèvis sante. Si w ap soufri oswa w an danje, tanpri kontakte yon pwofesyonèl sante oswa yon sèvis ijans toupre ou.",
@@ -75,8 +86,26 @@ export function detectLocale(message: string, fallback: Locale): Locale {
   const folded = fold(message);
   if (/\b(in english|speak english|answer in english)\b/.test(folded)) return "en";
   if (/\b(en francais|parle francais|reponds en francais)\b/.test(folded)) return "fr";
-  if (/\b(an kreyol|pale kreyol)\b/.test(folded)) return "ht";
+  if (/\b(an kreyol|pale kreyol|kreyol ayisyen)\b/.test(folded)) return "ht";
+  if (fallback !== "ht" && kreyolMarkerCount(message) > 0 && isKreyolText(message)) return "ht";
   return fallback;
+}
+
+export function finalizeAssistantText(
+  raw: string,
+  userText: string,
+  account: Locale,
+  dropProposal: boolean,
+): { text: string; proposal: Proposal | null; locale: Locale; languageOk: boolean } {
+  const locale = detectLocale(userText, account);
+  const extracted = extractProposal(raw);
+  const text = (extracted.clean || raw).trim();
+  return {
+    text,
+    proposal: dropProposal ? null : extracted.proposal,
+    locale,
+    languageOk: locale !== "ht" || isKreyolText(text),
+  };
 }
 
 export function extractProposal(text: string): { clean: string; proposal: Proposal | null } {
@@ -137,11 +166,18 @@ export function demoReply(message: string, fallback: Locale): {
     return { text: CARE[locale], proposal: null, locale };
   }
   const parsed = parseUtterance(message);
+  const folded = fold(message);
+  const asking =
+    /(kijan|poukisa|konsèy|konsey|eske|advice|conseil)/i.test(message) ||
+    /(kijan|poukisa|konsey|advice|conseil|balans)/.test(folded);
+  if (asking && !parsed.hours) {
+    return { text: ADVICE[locale], proposal: null, locale };
+  }
   if (parsed.category) {
     const result = proposalFromParse(parsed, locale);
     return { ...result, locale };
   }
-  if (/(balans|konsèy|konsey|advice|conseil|kijan)/i.test(message) || /(balans|konsey|advice|conseil)/.test(fold(message))) {
+  if (asking) {
     return { text: ADVICE[locale], proposal: null, locale };
   }
   return { text: DEFAULT_REPLY[locale], proposal: null, locale };
